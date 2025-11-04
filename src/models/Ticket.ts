@@ -17,6 +17,8 @@ export interface ITicket extends Document {
   channel: string;
   responses: number;
   metadata?: Record<string, any>;
+  resolvedBy?: mongoose.Types.ObjectId;
+  resolvedAt?: Date;
   created: Date;
   updated: Date;
   createdAt: Date;
@@ -99,6 +101,13 @@ const ticketSchema = new Schema<ITicket>(
       type: Schema.Types.Mixed,
       default: {},
     },
+    resolvedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
+    resolvedAt: {
+      type: Date,
+    },
     created: {
       type: Date,
       default: Date.now,
@@ -113,8 +122,8 @@ const ticketSchema = new Schema<ITicket>(
   }
 );
 
-// Generate ticket ID before saving
-ticketSchema.pre("save", async function (next) {
+// Generate ticket ID before validation so required passes
+ticketSchema.pre("validate", async function (next) {
   if (!this.ticketId) {
     const count = await mongoose.model("Ticket").countDocuments();
     this.ticketId = `TKT-${String(count + 1000).padStart(4, "0")}`;

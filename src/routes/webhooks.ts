@@ -2,6 +2,7 @@ import express, { Response } from "express";
 import { Ticket } from "../models/Ticket";
 import { Customer } from "../models/Customer";
 import { Activity } from "../models/Activity";
+import { Agent } from "../models/Agent";
 import { User } from "../models/User";
 import { detectTenantFromChannel, detectTenantFromToken } from "../utils/detectTenant";
 import { autoAssignAgent } from "../utils/autoAssignAgent";
@@ -9,6 +10,22 @@ import { emailService } from "../utils/emailService";
 import mongoose from "mongoose";
 
 const router = express.Router();
+
+// Helper function to update agent statistics when ticket is assigned
+const updateAgentStats = async (agentId: string | undefined, incrementAssigned = false) => {
+  if (!agentId) return;
+  try {
+    const agent = await Agent.findOne({ userId: new mongoose.Types.ObjectId(agentId) });
+    if (agent) {
+      if (incrementAssigned) {
+        agent.ticketsAssigned = (agent.ticketsAssigned || 0) + 1;
+      }
+      await agent.save();
+    }
+  } catch (error) {
+    console.error("Error updating agent stats:", error);
+  }
+};
 
 // Helper function to detect priority from message
 const detectPriority = (message: string): "Critical" | "High" | "Medium" | "Low" => {
@@ -70,8 +87,11 @@ router.post("/ticket", async (req: express.Request, res: Response) => {
       });
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(finalTenantId);
+    // Detect priority before assignment
+    const finalPriority = priority || detectPriority(message || "");
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(finalTenantId, finalPriority);
 
     // Create or find customer
     let customerId;
@@ -101,7 +121,7 @@ router.post("/ticket", async (req: express.Request, res: Response) => {
     const ticket = await Ticket.create({
       title: subject || `Ticket from ${finalChannel}`,
       description: message || subject || "No description provided",
-      priority: priority || detectPriority(message || ""),
+      priority: finalPriority,
       category: category || "general",
       tenantId: new mongoose.Types.ObjectId(finalTenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -113,6 +133,9 @@ router.post("/ticket", async (req: express.Request, res: Response) => {
       channel: finalChannel,
       metadata,
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -164,8 +187,11 @@ router.post("/whatsapp", async (req: express.Request, res: Response) => {
       });
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId);
+    // Detect priority
+    const ticketPriority = detectPriority(message);
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(tenantId, ticketPriority);
 
     // Create or find customer
     let customerId;
@@ -189,7 +215,7 @@ router.post("/whatsapp", async (req: express.Request, res: Response) => {
     const ticket = await Ticket.create({
       title: `WhatsApp: ${contactName || from}`,
       description: message,
-      priority: detectPriority(message),
+      priority: ticketPriority,
       category: "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -203,6 +229,9 @@ router.post("/whatsapp", async (req: express.Request, res: Response) => {
         from,
       },
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -257,14 +286,17 @@ router.post("/telegram", async (req: express.Request, res: Response) => {
       });
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId);
+    // Detect priority
+    const ticketPriority = detectPriority(msg);
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(tenantId, ticketPriority);
 
     // Create ticket
     const ticket = await Ticket.create({
       title: `Telegram: ${from.first_name || from.username || "User"}`,
       description: msg,
-      priority: detectPriority(msg),
+      priority: ticketPriority,
       category: "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -277,6 +309,9 @@ router.post("/telegram", async (req: express.Request, res: Response) => {
         from,
       },
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -328,14 +363,17 @@ router.post("/phone", async (req: express.Request, res: Response) => {
       });
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId);
+    // Phone calls are high priority by default
+    const ticketPriority: "High" = "High";
+
+    // Auto-assign agent based on priority (High → Senior Agents or Supervisors)
+    const assignedAgentId = await autoAssignAgent(tenantId, ticketPriority);
 
     // Create ticket
     const ticket = await Ticket.create({
       title: `Phone Call from ${callerNumber || "Unknown"}`,
       description: transcript || "Voice call received",
-      priority: "High",
+      priority: ticketPriority,
       category: "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -350,6 +388,9 @@ router.post("/phone", async (req: express.Request, res: Response) => {
         transcript,
       },
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -401,8 +442,11 @@ router.post("/contact-form", async (req: express.Request, res: Response) => {
       });
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId.toString());
+    // Determine priority
+    const ticketPriority = priority || "Medium";
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(tenantId.toString(), ticketPriority);
 
     // Create or find customer
     let customerId;
@@ -429,7 +473,7 @@ router.post("/contact-form", async (req: express.Request, res: Response) => {
     const ticket = await Ticket.create({
       title: subject || `Contact Form Submission from ${name || email || "Anonymous"}`,
       description: message || subject,
-      priority: priority || "Medium",
+      priority: ticketPriority,
       category: category || "general",
       tenantId: new mongoose.Types.ObjectId(tenantId.toString()),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -445,6 +489,9 @@ router.post("/contact-form", async (req: express.Request, res: Response) => {
         userAgent: req.headers["user-agent"],
       },
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -496,14 +543,17 @@ router.post("/chatbot", async (req: express.Request, res: Response) => {
       });
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId.toString());
+    // Detect priority
+    const ticketPriority = detectPriority(message);
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(tenantId.toString(), ticketPriority);
 
     // Create ticket
     const ticket = await Ticket.create({
       title: `Chatbot: ${user || "User"}`,
       description: message,
-      priority: detectPriority(message),
+      priority: ticketPriority,
       category: "general",
       tenantId: new mongoose.Types.ObjectId(tenantId.toString()),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -515,6 +565,9 @@ router.post("/chatbot", async (req: express.Request, res: Response) => {
         user,
       },
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -577,8 +630,11 @@ router.post("/tenant/:token", async (req: express.Request, res: Response) => {
 
     const finalChannel = channel || source || "web";
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId);
+    // Detect priority
+    const finalPriority = priority || detectPriority(message || "");
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(tenantId, finalPriority);
 
     // Create or find customer
     let customerId;
@@ -605,7 +661,7 @@ router.post("/tenant/:token", async (req: express.Request, res: Response) => {
     const ticket = await Ticket.create({
       title: subject || `Ticket from ${finalChannel}`,
       description: message || subject || "No description provided",
-      priority: priority || detectPriority(message || ""),
+      priority: finalPriority,
       category: category || "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -617,6 +673,9 @@ router.post("/tenant/:token", async (req: express.Request, res: Response) => {
       channel: finalChannel,
       metadata,
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({
@@ -703,8 +762,11 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
         description = message || subject || "No description provided";
     }
 
-    // Auto-assign agent
-    const assignedAgentId = await autoAssignAgent(tenantId);
+    // Detect priority
+    const finalPriority = priority || detectPriority(description);
+
+    // Auto-assign agent based on priority
+    const assignedAgentId = await autoAssignAgent(tenantId, finalPriority);
 
     // Create or find customer
     let customerId;
@@ -731,7 +793,7 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
     const ticket = await Ticket.create({
       title,
       description,
-      priority: priority || detectPriority(description),
+      priority: finalPriority,
       category: category || "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
@@ -743,6 +805,9 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
       channel: channel,
       metadata: { ...metadata, ...req.body },
     });
+
+    // Update agent statistics
+    await updateAgentStats(assignedAgentId, true);
 
     // Create activity
     await Activity.create({

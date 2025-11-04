@@ -1,10 +1,12 @@
 import express, { Request, Response } from "express";
 import { Ticket } from "../models/Ticket";
 import { Activity } from "../models/Activity";
+import { Agent } from "../models/Agent";
 import { protect, AuthRequest, authorize, checkTenantAccess } from "../middleware/auth";
 import { validateTicket } from "../middleware/validator";
 import { validationResult } from "express-validator";
 import { hasPermission } from "../utils/agentPermissions";
+import mongoose from "mongoose";
 
 const router = express.Router();
 
@@ -210,9 +212,10 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
 
     const oldStatus = ticket.status;
     const oldAgent = ticket.agentId?.toString();
+    const newAgent = req.body.agentId?.toString();
 
     // Check permission for ticket assignment
-    if (req.body.agentId && req.body.agentId !== oldAgent) {
+    if (newAgent && newAgent !== oldAgent) {
       const canAssign = await hasPermission(user, "canAssignTickets");
       if (!canAssign) {
         return res.status(403).json({
@@ -225,6 +228,69 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
     // Update ticket
     Object.assign(ticket, req.body);
     ticket.updated = new Date();
+
+    // If status moved to Resolved/Closed, stamp resolver
+    if (req.body.status && req.body.status !== oldStatus) {
+      const newStatus = req.body.status as string;
+      if (newStatus === "Resolved" || newStatus === "Closed") {
+        ticket.resolvedBy = user._id;
+        ticket.resolvedAt = new Date();
+        
+        // Update agent statistics if ticket has an agent
+        if (ticket.agentId) {
+          const agent = await Agent.findOne({ userId: ticket.agentId });
+          if (agent) {
+            // Increment resolved count
+            agent.resolved = (agent.resolved || 0) + 1;
+            // Decrement ticketsAssigned (since it's now resolved)
+            if (agent.ticketsAssigned > 0) {
+              agent.ticketsAssigned = Math.max(0, agent.ticketsAssigned - 1);
+            }
+            await agent.save();
+          }
+        }
+      } else {
+        // If reopening, clear resolved fields and adjust counts
+        if (oldStatus === "Resolved" || oldStatus === "Closed") {
+          if (ticket.agentId) {
+            const agent = await Agent.findOne({ userId: ticket.agentId });
+            if (agent) {
+              // Decrement resolved count
+              if (agent.resolved > 0) {
+                agent.resolved = Math.max(0, agent.resolved - 1);
+              }
+              // Increment ticketsAssigned (since it's now open again)
+              agent.ticketsAssigned = (agent.ticketsAssigned || 0) + 1;
+              await agent.save();
+            }
+          }
+        }
+        ticket.resolvedBy = undefined as any;
+        ticket.resolvedAt = undefined as any;
+      }
+    }
+
+    // Handle agent assignment changes
+    if (newAgent && newAgent !== oldAgent) {
+      // Decrement old agent's ticketsAssigned if ticket was assigned
+      if (oldAgent) {
+        const oldAgentDoc = await Agent.findOne({ userId: new mongoose.Types.ObjectId(oldAgent) });
+        if (oldAgentDoc && oldAgentDoc.ticketsAssigned > 0) {
+          oldAgentDoc.ticketsAssigned = Math.max(0, oldAgentDoc.ticketsAssigned - 1);
+          await oldAgentDoc.save();
+        }
+      }
+
+      // Increment new agent's ticketsAssigned
+      if (newAgent) {
+        const newAgentDoc = await Agent.findOne({ userId: new mongoose.Types.ObjectId(newAgent) });
+        if (newAgentDoc) {
+          newAgentDoc.ticketsAssigned = (newAgentDoc.ticketsAssigned || 0) + 1;
+          await newAgentDoc.save();
+        }
+      }
+    }
+
     await ticket.save();
 
     // Create activities for changes

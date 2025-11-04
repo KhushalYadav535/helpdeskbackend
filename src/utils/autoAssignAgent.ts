@@ -3,7 +3,8 @@ import { Ticket } from "../models/Ticket";
 import mongoose from "mongoose";
 
 export const autoAssignAgent = async (
-  tenantId: string
+  tenantId: string,
+  priority?: "Critical" | "High" | "Medium" | "Low"
 ): Promise<string | null> => {
   // Get all agents for this tenant
   const tenantAgents = await Agent.find({
@@ -40,11 +41,36 @@ export const autoAssignAgent = async (
     }
   }
 
-  // Assign to agent with least tickets (round-robin with load balancing)
-  let selectedAgent = availableAgents[0];
+  // Priority-based assignment with agent levels
+  let candidateAgents: typeof availableAgents = [];
+
+  if (priority === "Critical") {
+    // Critical tickets → Supervisors first, then Senior Agents, then any
+    candidateAgents = availableAgents.filter((a) => a.agentLevel === "supervisor");
+    if (candidateAgents.length === 0) {
+      candidateAgents = availableAgents.filter((a) => a.agentLevel === "senior-agent");
+    }
+    if (candidateAgents.length === 0) {
+      candidateAgents = availableAgents; // Fallback to any agent
+    }
+  } else if (priority === "High") {
+    // High priority → Senior Agents or Supervisors
+    candidateAgents = availableAgents.filter(
+      (a) => a.agentLevel === "senior-agent" || a.agentLevel === "supervisor"
+    );
+    if (candidateAgents.length === 0) {
+      candidateAgents = availableAgents; // Fallback to any agent
+    }
+  } else {
+    // Medium/Low priority → Any available agent
+    candidateAgents = availableAgents;
+  }
+
+  // Load balancing: Assign to agent with least tickets
+  let selectedAgent = candidateAgents[0];
   let minTickets = ticketCounts[selectedAgent.userId._id.toString()] || 0;
 
-  for (const agent of availableAgents) {
+  for (const agent of candidateAgents) {
     const agentIdStr = agent.userId._id.toString();
     const count = ticketCounts[agentIdStr] || 0;
     if (count < minTickets) {
