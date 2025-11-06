@@ -27,6 +27,18 @@ const updateAgentStats = async (agentId: string | undefined, incrementAssigned =
   }
 };
 
+// Helper function to normalize priority string to enum
+const normalizePriority = (priority: string | undefined): "Critical" | "High" | "Medium" | "Low" => {
+  if (!priority) return "Medium";
+  const p = priority.trim();
+  const lower = p.toLowerCase();
+  if (lower === "critical" || lower === "urgent") return "Critical";
+  if (lower === "high" || lower === "3") return "High";
+  if (lower === "medium" || lower === "med" || lower === "2") return "Medium";
+  if (lower === "low" || lower === "1") return "Low";
+  return "Medium";
+};
+
 // Helper function to detect priority from message
 const detectPriority = (message: string): "Critical" | "High" | "Medium" | "Low" => {
   const msg = message.toLowerCase();
@@ -749,6 +761,16 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
         title = `Phone Call from ${customerPhone || req.body.callerNumber || "Unknown"}`;
         description = message || req.body.transcript || "Voice call received";
         break;
+      case "email":
+        // Expecting fields: subject, message/body, from/email
+        title = subject || `Email from ${customerEmail || req.body.from || "Customer"}`;
+        description = message || req.body.body || req.body.text || "";
+        break;
+      case "slack":
+        // Expecting fields: channel, user, text
+        title = `Slack: ${req.body.channel || customerName || req.body.user || "Message"}`;
+        description = message || req.body.text || req.body.body || "";
+        break;
       case "contact-form":
         title = subject || `Contact Form: ${customerName || customerEmail || "Anonymous"}`;
         description = message || "";
@@ -762,8 +784,8 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
         description = message || subject || "No description provided";
     }
 
-    // Detect priority
-    const finalPriority = priority || detectPriority(description);
+    // Normalize and detect priority
+    const finalPriority = priority ? normalizePriority(priority) : detectPriority(description);
 
     // Auto-assign agent based on priority
     const assignedAgentId = await autoAssignAgent(tenantId, finalPriority);

@@ -34,7 +34,8 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
         name: (agent.userId as any).name,
         email: (agent.userId as any).email,
         avatar: (agent.userId as any).avatar,
-        status: agent.status,
+        // Force display as online in responses
+        status: "online",
         agentLevel: agent.agentLevel || "agent",
         ticketsAssigned: agent.ticketsAssigned,
         resolved: agent.resolved,

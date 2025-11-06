@@ -15,25 +15,31 @@ export const autoAssignAgent = async (
     return null;
   }
 
-  // Filter online/available agents (exclude offline)
-  const availableAgents = tenantAgents.filter(
-    (a) => a.status === "online" || a.status === "away"
-  );
+  // Treat all agents as available (always-online behavior)
+  const availableAgents = tenantAgents;
 
   if (availableAgents.length === 0) {
     // If no online agents, assign to any agent
     return tenantAgents[0].userId._id.toString();
   }
 
-  // Get current ticket counts for load balancing
+  // Get current ticket counts for load balancing (only count active/open tickets)
   const ticketCounts: Record<string, number> = {};
 
+  // Count only unresolved tickets (Open, In Progress, etc.) - exclude Resolved and Closed
   const unresolvedTickets = await Ticket.find({
     tenantId: new mongoose.Types.ObjectId(tenantId),
-    status: { $ne: "Resolved" },
+    status: { $nin: ["Resolved", "Closed"] }, // Only count active tickets
     agentId: { $exists: true },
   });
 
+  // Initialize all candidate agents with 0 tickets
+  for (const agent of availableAgents) {
+    const agentIdStr = agent.userId._id.toString();
+    ticketCounts[agentIdStr] = 0;
+  }
+
+  // Count tickets per agent
   for (const ticket of unresolvedTickets) {
     if (ticket.agentId) {
       const agentIdStr = ticket.agentId.toString();
@@ -45,40 +51,45 @@ export const autoAssignAgent = async (
   let candidateAgents: typeof availableAgents = [];
 
   if (priority === "Critical") {
-    // Critical tickets → Supervisors first, then Senior Agents, then any
+    // Critical tickets → Supervisors first, then Senior Agents only (no fallback to regular agents)
     candidateAgents = availableAgents.filter((a) => a.agentLevel === "supervisor");
     if (candidateAgents.length === 0) {
       candidateAgents = availableAgents.filter((a) => a.agentLevel === "senior-agent");
     }
-    if (candidateAgents.length === 0) {
-      candidateAgents = availableAgents; // Fallback to any agent
-    }
+    // If no supervisor or senior-agent, return null (unassigned) - do NOT fallback to regular agents
   } else if (priority === "High") {
-    // High priority → Senior Agents or Supervisors
+    // High priority → ONLY Senior Agents or Supervisors (no fallback to regular agents)
     candidateAgents = availableAgents.filter(
       (a) => a.agentLevel === "senior-agent" || a.agentLevel === "supervisor"
     );
-    if (candidateAgents.length === 0) {
-      candidateAgents = availableAgents; // Fallback to any agent
-    }
+    // If no senior-agent or supervisor, return null (unassigned) - do NOT fallback to regular agents
   } else {
-    // Medium/Low priority → Any available agent
+    // Medium/Low priority → Any available agent (including regular agents)
     candidateAgents = availableAgents;
   }
 
-  // Load balancing: Assign to agent with least tickets
+  // If no candidate agents found (for High/Critical), return null (unassigned)
+  if (candidateAgents.length === 0) {
+    return null;
+  }
+
+  // Load balancing: Assign to agent with least open tickets
+  // Find agent with minimum ticket count
   let selectedAgent = candidateAgents[0];
   let minTickets = ticketCounts[selectedAgent.userId._id.toString()] || 0;
 
   for (const agent of candidateAgents) {
     const agentIdStr = agent.userId._id.toString();
     const count = ticketCounts[agentIdStr] || 0;
+    
+    // Select agent with fewer tickets
     if (count < minTickets) {
       minTickets = count;
       selectedAgent = agent;
     }
   }
 
+  // Return the agent with least tickets (if multiple have same count, returns first one)
   return selectedAgent.userId._id.toString();
 };
 

@@ -19,6 +19,7 @@ import customerRoutes from "./routes/customers";
 import analyticsRoutes from "./routes/analytics";
 import webhookRoutes from "./routes/webhooks";
 import emailRoutes from "./routes/email";
+import commentRoutes from "./routes/comments";
 
 // Create Express app
 const app: Application = express();
@@ -30,24 +31,10 @@ connectDB();
 // Security middleware
 app.use(helmet());
 
-// CORS configuration - Allow multiple origins (local and production)
-const allowedOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-  : ["http://localhost:3000", "https://helpdeskfrontend-eta.vercel.app"];
-
+// CORS configuration - Allow all origins (use with care in production)
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.indexOf(origin) !== -1) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    credentials: true,
+    origin: true, // Reflects the request origin, effectively allowing all
   })
 );
 
@@ -88,6 +75,7 @@ app.use("/api/customers", customerRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/email", emailRoutes);
+app.use("/api/comments", commentRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
