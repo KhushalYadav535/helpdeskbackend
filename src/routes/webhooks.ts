@@ -736,6 +736,7 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
     const {
       message,
       subject,
+      description: bodyDescription,
       customerName,
       customerEmail,
       customerPhone,
@@ -751,41 +752,52 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
     switch (channel.toLowerCase()) {
       case "whatsapp":
         title = `WhatsApp: ${customerName || req.body.from || "User"}`;
-        description = message || req.body.message || "";
+        description = message || bodyDescription || req.body.message || req.body.text || "";
         break;
       case "telegram":
         title = `Telegram: ${customerName || req.body.from?.first_name || "User"}`;
-        description = message || req.body.message?.text || "";
+        description = message || bodyDescription || req.body.message?.text || req.body.text || "";
         break;
       case "phone":
         title = `Phone Call from ${customerPhone || req.body.callerNumber || "Unknown"}`;
-        description = message || req.body.transcript || "Voice call received";
+        description = message || bodyDescription || req.body.transcript || req.body.message || "Voice call received";
         break;
       case "email":
         // Expecting fields: subject, message/body, from/email
         title = subject || `Email from ${customerEmail || req.body.from || "Customer"}`;
-        description = message || req.body.body || req.body.text || "";
+        description = message || bodyDescription || req.body.body || req.body.text || "";
         break;
       case "slack":
         // Expecting fields: channel, user, text
         title = `Slack: ${req.body.channel || customerName || req.body.user || "Message"}`;
-        description = message || req.body.text || req.body.body || "";
+        description = message || bodyDescription || req.body.text || req.body.body || "";
         break;
       case "contact-form":
         title = subject || `Contact Form: ${customerName || customerEmail || "Anonymous"}`;
-        description = message || "";
+        description = message || bodyDescription || req.body.text || req.body.body || subject || "";
         break;
       case "chatbot":
         title = `Chatbot: ${customerName || req.body.user || "User"}`;
-        description = message || "";
+        description = message || bodyDescription || req.body.text || req.body.body || "";
         break;
       default:
         title = subject || `Ticket from ${channel}`;
-        description = message || subject || "No description provided";
+        description = message || bodyDescription || subject || req.body.text || req.body.body || "";
     }
 
+    const normalizedDescription = (description || bodyDescription || subject || "").toString().trim();
+
+    if (!normalizedDescription) {
+      return res.status(400).json({
+        success: false,
+        error: "Description is required",
+      });
+    }
+
+    const normalizedTitle = (title || subject || `Ticket from ${channel}`).toString().trim() || `Ticket from ${channel}`;
+
     // Normalize and detect priority
-    const finalPriority = priority ? normalizePriority(priority) : detectPriority(description);
+    const finalPriority = priority ? normalizePriority(priority) : detectPriority(normalizedDescription);
 
     // Auto-assign agent based on priority
     const assignedAgentId = await autoAssignAgent(tenantId, finalPriority);
@@ -813,8 +825,8 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
 
     // Create ticket
     const ticket = await Ticket.create({
-      title,
-      description,
+      title: normalizedTitle,
+      description: normalizedDescription,
       priority: finalPriority,
       category: category || "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
