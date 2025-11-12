@@ -6,7 +6,7 @@ export interface ITicket extends Document {
   description: string;
   priority: "Critical" | "High" | "Medium" | "Low";
   status: "Open" | "In Progress" | "Resolved" | "Closed";
-  category: "general" | "technical" | "billing" | "feature" | "bug";
+  category: "general" | "technical" | "billing" | "feature" | "bug" | "account";
   tenantId: mongoose.Types.ObjectId;
   agentId?: mongoose.Types.ObjectId;
   customerId?: mongoose.Types.ObjectId;
@@ -54,7 +54,7 @@ const ticketSchema = new Schema<ITicket>(
     },
     category: {
       type: String,
-      enum: ["general", "technical", "billing", "feature", "bug"],
+      enum: ["general", "technical", "billing", "feature", "bug", "account"],
       default: "general",
     },
     tenantId: {

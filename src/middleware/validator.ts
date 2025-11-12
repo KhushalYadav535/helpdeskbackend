@@ -33,7 +33,7 @@ export const validateTicket: ValidationChain[] = [
     .withMessage("Invalid priority"),
   body("category")
     .optional()
-    .isIn(["general", "technical", "billing", "feature", "bug"])
+    .isIn(["general", "technical", "billing", "feature", "bug", "account"])
     .withMessage("Invalid category"),
 ];
 
