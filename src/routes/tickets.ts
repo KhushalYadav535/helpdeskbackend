@@ -2,10 +2,12 @@ import express, { Request, Response } from "express";
 import { Ticket } from "../models/Ticket";
 import { Activity } from "../models/Activity";
 import { Agent } from "../models/Agent";
+import { User } from "../models/User";
 import { protect, AuthRequest, authorize, checkTenantAccess } from "../middleware/auth";
 import { validateTicket } from "../middleware/validator";
 import { validationResult } from "express-validator";
 import { hasPermission } from "../utils/agentPermissions";
+import { emailService } from "../utils/emailService";
 import mongoose from "mongoose";
 
 const router = express.Router();

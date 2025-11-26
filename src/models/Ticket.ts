@@ -13,7 +13,7 @@ export interface ITicket extends Document {
   customer: string;
   customerEmail?: string;
   customerPhone?: string;
-  source: "web" | "whatsapp" | "telegram" | "phone" | "contact-form" | "chatbot" | "email";
+  source: "web" | "whatsapp" | "telegram" | "phone" | "contact-form" | "chatbot" | "email" | "walk-in";
   channel: string;
   responses: number;
   metadata?: Record<string, any>;
@@ -86,7 +86,7 @@ const ticketSchema = new Schema<ITicket>(
     },
     source: {
       type: String,
-      enum: ["web", "whatsapp", "telegram", "phone", "contact-form", "chatbot", "email"],
+      enum: ["web", "whatsapp", "telegram", "phone", "contact-form", "chatbot", "email", "walk-in"],
       default: "web",
     },
     channel: {
