@@ -19,6 +19,7 @@ export interface ITicket extends Document {
   metadata?: Record<string, any>;
   resolvedBy?: mongoose.Types.ObjectId;
   resolvedAt?: Date;
+  assignedAt?: Date;
   created: Date;
   updated: Date;
   createdAt: Date;
@@ -106,6 +107,9 @@ const ticketSchema = new Schema<ITicket>(
       ref: "User",
     },
     resolvedAt: {
+      type: Date,
+    },
+    assignedAt: {
       type: Date,
     },
     created: {

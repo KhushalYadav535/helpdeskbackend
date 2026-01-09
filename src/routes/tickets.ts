@@ -274,6 +274,9 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
 
     // Handle agent assignment changes
     if (newAgent && newAgent !== oldAgent) {
+      // Set assignedAt when agent is assigned
+      ticket.assignedAt = new Date();
+      
       // Decrement old agent's ticketsAssigned if ticket was assigned
       if (oldAgent) {
         const oldAgentDoc = await Agent.findOne({ userId: new mongoose.Types.ObjectId(oldAgent) });

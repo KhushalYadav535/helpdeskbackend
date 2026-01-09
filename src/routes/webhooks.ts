@@ -137,6 +137,7 @@ router.post("/ticket", async (req: express.Request, res: Response) => {
       category: category || "general",
       tenantId: new mongoose.Types.ObjectId(finalTenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
+      assignedAt: assignedAgentId ? new Date() : undefined,
       customerId,
       customer: customerName || customerEmail || customerPhone || "Anonymous",
       customerEmail,
