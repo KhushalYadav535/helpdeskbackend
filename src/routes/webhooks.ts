@@ -12,7 +12,7 @@ import mongoose from "mongoose";
 const router = express.Router();
 
 // Helper function to update agent statistics when ticket is assigned
-const updateAgentStats = async (agentId: string | undefined, incrementAssigned = false) => {
+const updateAgentStats = async (agentId: string | undefined | null, incrementAssigned = false) => {
   if (!agentId) return;
   try {
     const agent = await Agent.findOne({ userId: new mongoose.Types.ObjectId(agentId) });

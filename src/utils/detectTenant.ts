@@ -27,7 +27,7 @@ export const detectTenantFromChannel = async (
           tenantPhone &&
           normalizePhone(tenantPhone) === normalizePhone(normalizedId)
         ) {
-          return tenant._id.toString();
+          return String(tenant._id);
         }
         break;
 
@@ -36,7 +36,7 @@ export const detectTenantFromChannel = async (
           channels.telegram &&
           channels.telegram.toLowerCase() === normalizedId
         ) {
-          return tenant._id.toString();
+          return String(tenant._id);
         }
         break;
 
@@ -47,7 +47,7 @@ export const detectTenantFromChannel = async (
             channels.email.toLowerCase().split("@")[1] ===
               normalizedId.split("@")[1])
         ) {
-          return tenant._id.toString();
+          return String(tenant._id);
         }
         break;
     }
@@ -61,6 +61,6 @@ export const detectTenantFromToken = async (
   token: string
 ): Promise<string | null> => {
   const tenant = await Tenant.findOne({ webhookToken: token, status: "active" });
-  return tenant ? tenant._id.toString() : null;
+  return tenant ? String(tenant._id) : null;
 };
 

@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import mongoose from "mongoose";
 import { Ticket } from "../models/Ticket";
 import { Activity } from "../models/Activity";
 import { Agent } from "../models/Agent";
@@ -8,7 +9,6 @@ import { validateTicket } from "../middleware/validator";
 import { validationResult } from "express-validator";
 import { hasPermission } from "../utils/agentPermissions";
 import { emailService } from "../utils/emailService";
-import mongoose from "mongoose";
 
 const router = express.Router();
 
@@ -235,7 +235,7 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
     if (req.body.status && req.body.status !== oldStatus) {
       const newStatus = req.body.status as string;
       if (newStatus === "Resolved" || newStatus === "Closed") {
-        ticket.resolvedBy = user._id;
+        ticket.resolvedBy = user._id as mongoose.Types.ObjectId;
         ticket.resolvedAt = new Date();
         
         // Update agent statistics if ticket has an agent

@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import { validationResult } from "express-validator";
+import crypto from "crypto";
 import { User } from "../models/User";
 import { Tenant } from "../models/Tenant";
 import { generateToken } from "../utils/generateToken";
@@ -63,7 +64,7 @@ router.post("/register", validateRegister, async (req: Request, res: Response) =
     });
 
     // Generate token
-    const token = generateToken(user._id.toString());
+    const token = generateToken(String(user._id));
 
     // Send welcome email (non-blocking)
     if (role === "tenant-admin" && finalTenantId) {
@@ -76,7 +77,7 @@ router.post("/register", validateRegister, async (req: Request, res: Response) =
     res.status(201).json({
       success: true,
       data: {
-        id: user._id.toString(),
+        id: String(user._id),
         name: user.name,
         email: user.email,
         role: user.role,
@@ -137,12 +138,12 @@ router.post("/login", validateLogin, async (req: Request, res: Response) => {
       }
 
       // Generate token
-      const token = generateToken(user._id.toString());
+      const token = generateToken(String(user._id));
 
       return res.json({
         success: true,
         data: {
-          id: user._id.toString(),
+          id: String(user._id),
           name: user.name,
           email: user.email,
           role: "super-admin", // Always return super-admin
@@ -181,12 +182,12 @@ router.post("/login", validateLogin, async (req: Request, res: Response) => {
     }
 
     // Generate token
-    const token = generateToken(user._id.toString());
+    const token = generateToken(String(user._id));
 
     res.json({
       success: true,
       data: {
-        id: user._id.toString(),
+        id: String(user._id),
         name: user.name,
         email: user.email,
         role: user.role,
@@ -195,6 +196,124 @@ router.post("/login", validateLogin, async (req: Request, res: Response) => {
         companyName: user.companyName,
       },
       token,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Server error",
+    });
+  }
+});
+
+// @route   POST /api/auth/forgot-password
+// @desc    Forgot password - send reset email
+// @access  Public
+router.post("/forgot-password", async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Email is required",
+      });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+
+    // Don't reveal if user exists or not (security best practice)
+    if (!user) {
+      return res.json({
+        success: true,
+        message: "If an account with that email exists, a password reset link has been sent.",
+      });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetTokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+    // Set token and expiration (1 hour)
+    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordExpire = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await user.save();
+
+    // Create reset URL
+    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`;
+
+    // Send email
+    try {
+      await emailService.sendPasswordResetEmail(user.email, user.name, resetToken, resetUrl);
+    } catch (emailError) {
+      console.error("Failed to send password reset email:", emailError);
+      // Clear token if email fails
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpire = undefined;
+      await user.save();
+      return res.status(500).json({
+        success: false,
+        error: "Failed to send reset email. Please try again later.",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "If an account with that email exists, a password reset link has been sent.",
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Server error",
+    });
+  }
+});
+
+// @route   POST /api/auth/reset-password
+// @desc    Reset password with token
+// @access  Public
+router.post("/reset-password", async (req: Request, res: Response) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        success: false,
+        error: "Token and password are required",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: "Password must be at least 6 characters",
+      });
+    }
+
+    // Hash the token to compare with stored hash
+    const resetTokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    // Find user with valid token
+    const user = await User.findOne({
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpire: { $gt: Date.now() },
+    }).select("+password");
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid or expired reset token",
+      });
+    }
+
+    // Set new password
+    user.password = password;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Password has been reset successfully. You can now login with your new password.",
     });
   } catch (error: any) {
     res.status(500).json({
@@ -214,7 +333,7 @@ router.get("/me", protect, async (req: AuthRequest, res: Response) => {
     res.json({
       success: true,
       data: {
-        id: user!._id.toString(),
+        id: String(user!._id),
         name: user!.name,
         email: user!.email,
         role: user!.role,

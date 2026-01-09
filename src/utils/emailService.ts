@@ -276,7 +276,7 @@ class EmailService {
 
     return this.sendEmail({
       to,
-      subject: "Password Reset Request - Helpdesk",
+      subject: "Password Reset Request - RezolvX",
       html,
     });
   }

@@ -36,7 +36,7 @@ export const hasPermission = async (
     return true; // Admin roles have all permissions
   }
 
-  const agentLevel = await getAgentLevel(user._id.toString());
+  const agentLevel = await getAgentLevel(String(user._id));
   if (!agentLevel) {
     return false;
   }
