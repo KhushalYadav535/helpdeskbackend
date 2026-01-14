@@ -20,6 +20,7 @@ import analyticsRoutes from "./routes/analytics";
 import webhookRoutes from "./routes/webhooks";
 import emailRoutes from "./routes/email";
 import commentRoutes from "./routes/comments";
+import leadRoutes from "./routes/leads";
 
 // Create Express app
 const app: Application = express();
@@ -76,6 +77,7 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/webhooks", webhookRoutes);
 app.use("/api/email", emailRoutes);
 app.use("/api/comments", commentRoutes);
+app.use("/api/leads", leadRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {

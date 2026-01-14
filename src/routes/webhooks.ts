@@ -4,9 +4,11 @@ import { Customer } from "../models/Customer";
 import { Activity } from "../models/Activity";
 import { Agent } from "../models/Agent";
 import { User } from "../models/User";
+import { Lead } from "../models/Lead";
 import { detectTenantFromChannel, detectTenantFromToken } from "../utils/detectTenant";
 import { autoAssignAgent } from "../utils/autoAssignAgent";
 import { emailService } from "../utils/emailService";
+import { analyzeTranscript } from "../utils/transcriptAnalyzer";
 import mongoose from "mongoose";
 
 const router = express.Router();
@@ -863,6 +865,161 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
     });
   } catch (error: any) {
     console.error("Tenant channel webhook error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Internal server error",
+    });
+  }
+});
+
+// @route   POST /api/webhooks/zoronal
+// @desc    Zoronal webhook - receive call data and create lead
+// @access  Public (webhook)
+router.post("/zoronal", async (req: express.Request, res: Response) => {
+  try {
+    const zoronalData = req.body;
+
+    // Extract call data from Zoronal webhook
+    const {
+      call_id,
+      caller_number,
+      called_number,
+      caller_name,
+      caller_email,
+      duration,
+      recording_url,
+      transcript,
+      timestamp,
+      call_status,
+      call_type,
+      agent_name,
+      ...otherData
+    } = zoronalData;
+
+    if (!call_id) {
+      return res.status(400).json({
+        success: false,
+        error: "call_id is required",
+      });
+    }
+
+    // Check if lead already exists (prevent duplicates)
+    const existingLead = await Lead.findOne({ zoronalCallId: call_id });
+    if (existingLead) {
+      return res.json({
+        success: true,
+        message: "Lead already exists",
+        data: existingLead,
+      });
+    }
+
+    // Detect tenant from called number
+    let tenantId: string | null = null;
+    if (called_number) {
+      tenantId = await detectTenantFromChannel("phone", called_number);
+    }
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: "Tenant not found for this phone number. Please configure phone number in tenant settings.",
+      });
+    }
+
+    // Analyze transcript if available
+    let analysisResult = null;
+    if (transcript) {
+      analysisResult = analyzeTranscript(transcript);
+    } else {
+      // Default analysis if no transcript
+      analysisResult = {
+        category: "other" as const,
+        confidence: 0.3,
+        keywords: [],
+        sentiment: "neutral" as const,
+        intent: "unknown",
+        suggestedAction: "Review manually - no transcript available",
+      };
+    }
+
+    // Determine lead type from analysis
+    const leadType = analysisResult.category;
+
+    // Create lead
+    const lead = await Lead.create({
+      source: "zoronal",
+      type: leadType,
+      status: "new",
+      callerName: caller_name,
+      callerPhone: caller_number,
+      callerEmail: caller_email,
+      calledNumber: called_number,
+      callDuration: duration,
+      callRecordingUrl: recording_url,
+      callTranscript: transcript,
+      callTimestamp: timestamp ? new Date(timestamp) : new Date(),
+      zoronalCallId: call_id,
+      zoronalData: zoronalData, // Store complete payload
+      analysisResult: analysisResult,
+      tenantId: new mongoose.Types.ObjectId(tenantId),
+      metadata: {
+        call_status,
+        call_type,
+        agent_name,
+        ...otherData,
+      },
+    });
+
+    // Auto-create ticket if it's a service request or support
+    let ticket = null;
+    if (leadType === "service-request" || leadType === "support") {
+      const priority = analysisResult.sentiment === "negative" ? "High" : "Medium";
+      const assignedAgentId = await autoAssignAgent(tenantId, priority);
+
+      ticket = await Ticket.create({
+        title: `Service Request from ${caller_name || caller_number || "Unknown"}`,
+        description: transcript || `Call received from ${caller_number || "Unknown"}`,
+        priority,
+        category: "general",
+        tenantId: new mongoose.Types.ObjectId(tenantId),
+        agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
+        assignedAt: assignedAgentId ? new Date() : undefined,
+        customer: caller_name || caller_number || "Unknown Caller",
+        customerPhone: caller_number,
+        source: "phone",
+        channel: "zoronal",
+        metadata: {
+          leadId: lead.leadId,
+          zoronalCallId: call_id,
+          recording: recording_url,
+          duration,
+          transcript,
+        },
+      });
+
+      // Link ticket to lead
+      lead.ticketId = ticket._id as mongoose.Types.ObjectId;
+      lead.ticketCreated = true;
+      await lead.save();
+    }
+
+    // Populate lead data
+    const populatedLead = await Lead.findById(lead._id)
+      .populate("tenantId", "name")
+      .populate("assignedTo", "name email")
+      .populate("ticketId", "ticketId title status");
+
+    res.status(201).json({
+      success: true,
+      data: populatedLead,
+      ticketCreated: ticket ? true : false,
+      ticketId: ticket?._id,
+      message: leadType === "sales-lead"
+        ? "Lead created. Assign to sales team."
+        : "Lead and ticket created successfully.",
+    });
+  } catch (error: any) {
+    console.error("Zoronal webhook error:", error);
     res.status(500).json({
       success: false,
       error: error.message || "Internal server error",
