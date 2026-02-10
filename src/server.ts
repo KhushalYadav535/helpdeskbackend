@@ -26,12 +26,14 @@ import leadRoutes from "./routes/leads";
 const app: Application = express();
 const PORT = process.env.PORT || 4000;
 
+// Trust proxy (required when behind Traefik/Nginx - fixes X-Forwarded-For + rate-limit)
+app.set("trust proxy", 1);
+
 // Connect to MongoDB
 connectDB();
 
 // Security middleware
 app.use(helmet());
-
 // CORS configuration - Allow all origins (use with care in production)
 app.use(
   cors({
