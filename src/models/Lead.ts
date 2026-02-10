@@ -187,12 +187,10 @@ leadSchema.pre("validate", async function (next) {
   next();
 });
 
-// Indexes for better query performance
+// Indexes for better query performance (zoronalCallId & callerPhone already have index: true above)
 leadSchema.index({ tenantId: 1, status: 1 });
 leadSchema.index({ tenantId: 1, type: 1 });
 leadSchema.index({ tenantId: 1, source: 1 });
-leadSchema.index({ zoronalCallId: 1 });
-leadSchema.index({ callerPhone: 1 });
 leadSchema.index({ assignedTo: 1 });
 
 export const Lead = mongoose.model<ILead>("Lead", leadSchema);

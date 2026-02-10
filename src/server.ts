@@ -24,7 +24,7 @@ import leadRoutes from "./routes/leads";
 
 // Create Express app
 const app: Application = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 4000;
 
 // Connect to MongoDB
 connectDB();

@@ -1,0 +1,15 @@
+node_modules
+.env
+.env.local
+*.log
+.DS_Store
+dist/
+coverage/
+.vscode/
+.idea/
+AGENT_FLOW_COMPLETE.md
+FINAL_100_PERCENT_STATUS.md
+SUMMARY.md
+GETTING_STARTED.md
+OPEN_AI_INTEGRATION.md
+COMPLETION_REPORT.md

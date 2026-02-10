@@ -148,7 +148,7 @@ router.post("/migrate-from-tickets", protect, authorize("super-admin", "tenant-a
 router.get("/", protect, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { type, status, source, tenantId } = req.query;
+    const { type, status, source, tenantId, limit, page } = req.query;
 
     // Build query
     const query: any = {};
@@ -174,17 +174,36 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
       query.source = source;
     }
 
-    const leads = await Lead.find(query)
+    // Pagination support - if no limit specified, return all records (like tickets)
+    const pageNumber = page ? parseInt(page as string, 10) : 1;
+    const limitNumber = limit ? parseInt(limit as string, 10) : undefined; // No limit by default to show all records
+    const skip = limitNumber ? (pageNumber - 1) * limitNumber : 0;
+
+    // Get total count for pagination info
+    const totalCount = await Lead.countDocuments(query);
+
+    let queryBuilder = Lead.find(query)
       .populate("tenantId", "name")
       .populate("assignedTo", "name email")
       .populate("ticketId", "ticketId title status")
       .sort({ callTimestamp: -1, createdAt: -1 })
-      .limit(100);
+      .skip(skip);
+    
+    // Only apply limit if specified
+    if (limitNumber) {
+      queryBuilder = queryBuilder.limit(limitNumber);
+    }
+
+    const leads = await queryBuilder;
 
     res.json({
       success: true,
       data: leads,
       count: leads.length,
+      total: totalCount,
+      page: pageNumber,
+      limit: limitNumber || totalCount, // Show total if no limit
+      totalPages: limitNumber ? Math.ceil(totalCount / limitNumber) : 1,
     });
   } catch (error: any) {
     res.status(500).json({
