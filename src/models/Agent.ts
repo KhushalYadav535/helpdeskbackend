@@ -4,7 +4,7 @@ export interface IAgent extends Document {
   userId: mongoose.Types.ObjectId;
   tenantId: mongoose.Types.ObjectId;
   status: "online" | "away" | "offline";
-  agentLevel: "agent" | "senior-agent" | "supervisor";
+  agentLevel: "agent" | "senior-agent" | "supervisor" | "management";
   ticketsAssigned: number;
   resolved: number;
   satisfaction: number;
@@ -34,7 +34,7 @@ const agentSchema = new Schema<IAgent>(
     },
     agentLevel: {
       type: String,
-      enum: ["agent", "senior-agent", "supervisor"],
+      enum: ["agent", "senior-agent", "supervisor", "management"],
       default: "agent",
     },
     ticketsAssigned: {

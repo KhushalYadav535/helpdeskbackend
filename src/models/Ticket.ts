@@ -24,6 +24,14 @@ export interface ITicket extends Document {
   updated: Date;
   createdAt: Date;
   updatedAt: Date;
+  // Escalation
+  escalationLevel?: "agent" | "senior-agent" | "supervisor";
+  escalatedAt?: Date;
+  escalationDueAt?: Date;
+  // Client feedback (required before Close)
+  clientFeedback?: "satisfied" | "dissatisfied" | "no_response";
+  clientFeedbackAt?: Date;
+  clientFeedbackNote?: string;
 }
 
 const ticketSchema = new Schema<ITicket>(
@@ -111,6 +119,27 @@ const ticketSchema = new Schema<ITicket>(
     },
     assignedAt: {
       type: Date,
+    },
+    escalationLevel: {
+      type: String,
+      enum: ["agent", "senior-agent", "supervisor"],
+      default: "agent",
+    },
+    escalatedAt: {
+      type: Date,
+    },
+    escalationDueAt: {
+      type: Date,
+    },
+    clientFeedback: {
+      type: String,
+      enum: ["satisfied", "dissatisfied", "no_response"],
+    },
+    clientFeedbackAt: {
+      type: Date,
+    },
+    clientFeedbackNote: {
+      type: String,
     },
     created: {
       type: Date,

@@ -1,7 +1,7 @@
 import { Agent } from "../models/Agent";
 import { IUser } from "../models/User";
 
-export type AgentLevel = "agent" | "senior-agent" | "supervisor";
+export type AgentLevel = "agent" | "senior-agent" | "supervisor" | "management";
 
 export interface AgentPermissions {
   canViewTickets: boolean;
@@ -10,6 +10,7 @@ export interface AgentPermissions {
   canAssignTickets: boolean;
   canTrackAgents: boolean;
   canManageAgents: boolean;
+  canViewDashboard: boolean;
 }
 
 /**
@@ -42,11 +43,13 @@ export const hasPermission = async (
   }
 
   const permissions = getPermissionsForLevel(agentLevel);
-  return permissions[permission];
+  return permission in permissions ? (permissions as any)[permission] : false;
 };
 
 /**
  * Get permissions for agent level
+ * Supervisor: manual assign/transfer only, no auto-assignment to them
+ * Management: dashboard only, no ticket work
  */
 export const getPermissionsForLevel = (level: AgentLevel): AgentPermissions => {
   switch (level) {
@@ -58,6 +61,7 @@ export const getPermissionsForLevel = (level: AgentLevel): AgentPermissions => {
         canAssignTickets: false,
         canTrackAgents: false,
         canManageAgents: false,
+        canViewDashboard: true,
       };
 
     case "senior-agent":
@@ -65,9 +69,10 @@ export const getPermissionsForLevel = (level: AgentLevel): AgentPermissions => {
         canViewTickets: true,
         canWorkOnTickets: true,
         canCloseTickets: true,
-        canAssignTickets: true,
+        canAssignTickets: false,
         canTrackAgents: false,
         canManageAgents: false,
+        canViewDashboard: true,
       };
 
     case "supervisor":
@@ -78,6 +83,18 @@ export const getPermissionsForLevel = (level: AgentLevel): AgentPermissions => {
         canAssignTickets: true,
         canTrackAgents: true,
         canManageAgents: true,
+        canViewDashboard: true,
+      };
+
+    case "management":
+      return {
+        canViewTickets: false,
+        canWorkOnTickets: false,
+        canCloseTickets: false,
+        canAssignTickets: false,
+        canTrackAgents: false,
+        canManageAgents: false,
+        canViewDashboard: true,
       };
 
     default:
@@ -88,6 +105,7 @@ export const getPermissionsForLevel = (level: AgentLevel): AgentPermissions => {
         canAssignTickets: false,
         canTrackAgents: false,
         canManageAgents: false,
+        canViewDashboard: false,
       };
   }
 };

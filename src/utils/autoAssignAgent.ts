@@ -47,25 +47,18 @@ export const autoAssignAgent = async (
     }
   }
 
-  // Priority-based assignment with agent levels
+  // Priority-based assignment - Supervisors are NEVER auto-assigned (they do manual assign/transfer only)
+  // Exclude supervisors from auto-assignment pool
+  const assignableAgents = availableAgents.filter((a) => a.agentLevel !== "supervisor" && a.agentLevel !== "management");
+
   let candidateAgents: typeof availableAgents = [];
 
   if (priority === "Critical") {
-    // Critical tickets → Supervisors first, then Senior Agents only (no fallback to regular agents)
-    candidateAgents = availableAgents.filter((a) => a.agentLevel === "supervisor");
-    if (candidateAgents.length === 0) {
-      candidateAgents = availableAgents.filter((a) => a.agentLevel === "senior-agent");
-    }
-    // If no supervisor or senior-agent, return null (unassigned) - do NOT fallback to regular agents
-  } else if (priority === "High") {
-    // High priority → ONLY Senior Agents or Supervisors (no fallback to regular agents)
-    candidateAgents = availableAgents.filter(
-      (a) => a.agentLevel === "senior-agent" || a.agentLevel === "supervisor"
-    );
-    // If no senior-agent or supervisor, return null (unassigned) - do NOT fallback to regular agents
+    // Critical → Senior Agents only (distributed), NOT supervisors
+    candidateAgents = assignableAgents.filter((a) => a.agentLevel === "senior-agent");
   } else {
-    // Medium/Low priority → Any available agent (including regular agents)
-    candidateAgents = availableAgents;
+    // Medium, Low, High → Agents (and Senior Agents for load balance), distributed
+    candidateAgents = assignableAgents.filter((a) => a.agentLevel === "agent" || a.agentLevel === "senior-agent");
   }
 
   // If no candidate agents found (for High/Critical), return null (unassigned)

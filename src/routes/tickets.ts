@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import { Ticket } from "../models/Ticket";
 import { Activity } from "../models/Activity";
 import { Agent } from "../models/Agent";
@@ -9,6 +10,7 @@ import { validateTicket } from "../middleware/validator";
 import { validationResult } from "express-validator";
 import { hasPermission } from "../utils/agentPermissions";
 import { emailService } from "../utils/emailService";
+import { runEscalation } from "../utils/escalationService";
 
 const router = express.Router();
 
@@ -40,8 +42,8 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
       query.priority = priority;
     }
 
-    // Filter by agent: if myTickets=true OR if agent role without myTickets param
-    if (user.role === "agent" && myTickets === "true") {
+    // Agent: always see only their assigned tickets (no option to see all)
+    if (user.role === "agent") {
       query.agentId = user._id;
     }
 
@@ -222,8 +224,25 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
       if (!canAssign) {
         return res.status(403).json({
           success: false,
-          error: "You don't have permission to assign tickets. Only Senior Agents and above can assign tickets.",
+          error: "You don't have permission to assign tickets. Only Supervisors can manually assign or transfer tickets.",
         });
+      }
+    }
+
+    // Close requires client feedback (unless super-admin/tenant-admin force-close)
+    if (req.body.status === "Closed" && oldStatus !== "Closed") {
+      const canForceClose = user.role === "super-admin" || user.role === "tenant-admin";
+      const hasFeedback = ticket.clientFeedback || req.body.clientFeedback;
+      if (!canForceClose && !hasFeedback) {
+        return res.status(400).json({
+          success: false,
+          error: "Ticket cannot be closed without client feedback. Agent/Senior Agent can only Resolve. Client must confirm (satisfied/dissatisfied) before closing.",
+        });
+      }
+      if (req.body.clientFeedback) {
+        ticket.clientFeedback = req.body.clientFeedback;
+        ticket.clientFeedbackAt = new Date();
+        ticket.clientFeedbackNote = req.body.clientFeedbackNote;
       }
     }
 
@@ -237,7 +256,10 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
       if (newStatus === "Resolved" || newStatus === "Closed") {
         ticket.resolvedBy = user._id as mongoose.Types.ObjectId;
         ticket.resolvedAt = new Date();
-        
+        if (newStatus === "Resolved") {
+          ticket.metadata = ticket.metadata || {};
+          ticket.metadata.feedbackToken = crypto.randomBytes(24).toString("hex");
+        }
         // Update agent statistics if ticket has an agent
         if (ticket.agentId) {
           const agent = await Agent.findOne({ userId: ticket.agentId });
@@ -332,6 +354,138 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
       success: false,
       error: error.message || "Server error",
     });
+  }
+});
+
+// @route   POST /api/tickets/:id/transfer
+// @desc    Transfer ticket to another agent (Supervisor only)
+// @access  Private
+router.post("/:id/transfer", protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket not found" });
+    }
+
+    const user = req.user!;
+    if (user.role !== "super-admin" && ticket.tenantId.toString() !== user.tenantId?.toString()) {
+      return res.status(403).json({ success: false, error: "Not authorized" });
+    }
+
+    const canAssign = await hasPermission(user, "canAssignTickets");
+    if (!canAssign) {
+      return res.status(403).json({
+        success: false,
+        error: "Only Supervisors can transfer tickets.",
+      });
+    }
+
+    const { toAgentId } = req.body;
+    if (!toAgentId) {
+      return res.status(400).json({ success: false, error: "toAgentId is required" });
+    }
+
+    const oldAgentId = ticket.agentId?.toString();
+    const newAgentId = toAgentId.toString();
+    if (oldAgentId === newAgentId) {
+      return res.status(400).json({ success: false, error: "Ticket is already assigned to this agent" });
+    }
+
+    ticket.agentId = new mongoose.Types.ObjectId(newAgentId);
+    ticket.assignedAt = new Date();
+    ticket.updated = new Date();
+    await ticket.save();
+
+    if (oldAgentId) {
+      const oldAgentDoc = await Agent.findOne({ userId: new mongoose.Types.ObjectId(oldAgentId) });
+      if (oldAgentDoc && oldAgentDoc.ticketsAssigned > 0) {
+        oldAgentDoc.ticketsAssigned = Math.max(0, oldAgentDoc.ticketsAssigned - 1);
+        await oldAgentDoc.save();
+      }
+    }
+    const newAgentDoc = await Agent.findOne({ userId: new mongoose.Types.ObjectId(newAgentId) });
+    if (newAgentDoc) {
+      newAgentDoc.ticketsAssigned = (newAgentDoc.ticketsAssigned || 0) + 1;
+      await newAgentDoc.save();
+    }
+
+    await Activity.create({
+      ticketId: ticket._id,
+      action: "transferred",
+      description: `Ticket transferred to new agent`,
+      user: user.name,
+      userId: user._id,
+    });
+
+    const updated = await Ticket.findById(ticket._id)
+      .populate("tenantId", "name")
+      .populate("agentId", "name email");
+
+    res.json({ success: true, data: updated, message: "Ticket transferred successfully" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Server error" });
+  }
+});
+
+// @route   POST /api/tickets/:id/client-feedback
+// @desc    Submit client feedback (required before Close). Public with token.
+// @access  Public (token in body)
+router.post("/:id/client-feedback", async (req: Request, res: Response) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket not found" });
+    }
+
+    const { feedbackToken, feedback, note } = req.body;
+    const storedToken = ticket.metadata?.feedbackToken;
+
+    if (!storedToken || feedbackToken !== storedToken) {
+      return res.status(401).json({ success: false, error: "Invalid or expired feedback link" });
+    }
+
+    const validFeedback = ["satisfied", "dissatisfied", "no_response"];
+    if (!feedback || !validFeedback.includes(feedback)) {
+      return res.status(400).json({ success: false, error: "Invalid feedback. Use: satisfied, dissatisfied, or no_response" });
+    }
+
+    ticket.clientFeedback = feedback;
+    ticket.clientFeedbackAt = new Date();
+    ticket.clientFeedbackNote = note;
+    if (feedback === "satisfied" || feedback === "no_response") {
+      ticket.status = "Closed";
+      ticket.resolvedAt = new Date();
+    } else if (feedback === "dissatisfied") {
+      ticket.status = "In Progress";
+      ticket.clientFeedback = undefined;
+      ticket.clientFeedbackAt = undefined;
+    }
+    ticket.updated = new Date();
+    await ticket.save();
+
+    res.json({
+      success: true,
+      message: feedback === "satisfied" ? "Thank you! Ticket closed." : feedback === "dissatisfied" ? "We'll look into it. Ticket reopened." : "Feedback recorded.",
+      data: { ticketId: ticket.ticketId, status: ticket.status },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Server error" });
+  }
+});
+
+// @route   POST /api/tickets/run-escalation
+// @desc    Run escalation job (call via cron every 15-30 min). Protected by cron secret or admin.
+// @access  Private
+router.post("/run-escalation", protect, authorize("super-admin", "tenant-admin"), async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await runEscalation();
+    res.json({
+      success: true,
+      message: `Escalation complete: ${result.escalatedToSenior} to Senior Agent, ${result.escalatedToSupervisor} to Supervisor`,
+      ...result,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Server error" });
   }
 });
 
