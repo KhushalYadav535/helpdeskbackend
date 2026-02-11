@@ -359,7 +359,16 @@ router.post("/telegram", async (req: express.Request, res: Response) => {
 // @access  Public
 router.post("/phone", async (req: express.Request, res: Response) => {
   try {
-    const { calledNumber, callerNumber, transcript, duration } = req.body;
+    const {
+      calledNumber,
+      callerNumber,
+      callerName,
+      callerEmail,
+      transcript,
+      duration,
+      recording,
+      timestamp,
+    } = req.body;
 
     if (!calledNumber) {
       return res.status(400).json({
@@ -392,8 +401,9 @@ router.post("/phone", async (req: express.Request, res: Response) => {
       category: "general",
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
-      customer: callerNumber || "Unknown Caller",
+      customer: callerName || callerNumber || "Unknown Caller",
       customerPhone: callerNumber,
+      customerEmail: callerEmail,
       source: "phone",
       channel: "phone",
       metadata: {
@@ -401,6 +411,43 @@ router.post("/phone", async (req: express.Request, res: Response) => {
         callerNumber,
         duration,
         transcript,
+        recording,
+        timestamp,
+      },
+    });
+
+    // Create Lead as well so Call History shows the call (Call History reads from Leads)
+    const analysisResult = transcript
+      ? analyzeTranscript(transcript)
+      : {
+          category: "other" as const,
+          confidence: 0.3,
+          keywords: [] as string[],
+          sentiment: "neutral" as const,
+          intent: "unknown",
+          suggestedAction: "Review manually - phone call",
+        };
+
+    await Lead.create({
+      source: "phone",
+      type: analysisResult.category,
+      status: "new",
+      callerName: callerName || callerNumber || "Unknown",
+      callerPhone: callerNumber,
+      callerEmail: callerEmail,
+      calledNumber: calledNumber,
+      callDuration: duration,
+      callRecordingUrl: recording,
+      callTranscript: transcript || "Voice call received",
+      callTimestamp: timestamp ? new Date(timestamp) : ticket.created,
+      tenantId: new mongoose.Types.ObjectId(tenantId),
+      ticketId: ticket._id as mongoose.Types.ObjectId,
+      ticketCreated: true,
+      analysisResult,
+      metadata: {
+        migratedFrom: "phone-webhook",
+        calledNumber,
+        callerNumber,
       },
     });
 
@@ -735,18 +782,20 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
       });
     }
 
-    // Process based on channel type
+    // Process based on channel type (n8n sends "customer", some send "customerName")
     const {
       message,
       subject,
       description: bodyDescription,
-      customerName,
+      customer: bodyCustomer,
+      customerName: bodyCustomerName,
       customerEmail,
       customerPhone,
       priority,
       category,
       metadata = {},
     } = req.body;
+    const customerName = bodyCustomerName || bodyCustomer || req.body.customerName || req.body.customer;
 
     // Handle channel-specific logic
     let title = "";
@@ -762,7 +811,7 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
         description = message || bodyDescription || req.body.message?.text || req.body.text || "";
         break;
       case "phone":
-        title = `Phone Call from ${customerPhone || req.body.callerNumber || "Unknown"}`;
+        title = `Phone Call from ${customerName || customerPhone || req.body.callerNumber || "Unknown"}`;
         description = message || bodyDescription || req.body.transcript || req.body.message || "Voice call received";
         break;
       case "email":
@@ -835,7 +884,7 @@ router.post("/tenant/:token/:channel", async (req: express.Request, res: Respons
       tenantId: new mongoose.Types.ObjectId(tenantId),
       agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
       customerId,
-      customer: customerName || customerEmail || customerPhone || "Anonymous",
+      customer: customerName || customerEmail || customerPhone || req.body.customer || "Anonymous",
       customerEmail,
       customerPhone: customerPhone || req.body.from || req.body.callerNumber,
       source: channel,
