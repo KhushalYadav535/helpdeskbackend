@@ -83,8 +83,12 @@ router.post("/migrate-from-tickets", protect, authorize("super-admin", "tenant-a
           };
         }
 
-        // Determine lead type
+        // Determine lead type - only create lead if caller asked for products/services
         const leadType = analysisResult.category;
+        if (leadType === "support" || leadType === "other") {
+          skipped++;
+          continue; // Skip - not a product/service inquiry
+        }
 
         // Determine source
         let source: "zoronal" | "phone" | "other" = "phone";
@@ -163,9 +167,12 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
       query.tenantId = user.tenantId;
     }
 
-    // Additional filters
+    // Leads = only calls where caller asked for products/services (sales-lead, service-request)
+    // Exclude support and other (general inquiries, complaints)
     if (type) {
       query.type = type;
+    } else {
+      query.type = { $in: ["sales-lead", "service-request"] };
     }
     if (status) {
       query.status = status;
