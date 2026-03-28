@@ -8,6 +8,12 @@ export interface IAgent extends Document {
   ticketsAssigned: number;
   resolved: number;
   satisfaction: number;
+  /** Tenant Admin only — max tickets per day cap */
+  maxTicketsPerDay: number;
+  notificationsEnabled: boolean;
+  emailNotifications: boolean;
+  autoAcceptTickets: boolean;
+  phoneNumber?: string;
   joinDate: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -54,6 +60,29 @@ const agentSchema = new Schema<IAgent>(
     joinDate: {
       type: Date,
       default: Date.now,
+    },
+    maxTicketsPerDay: {
+      type: Number,
+      default: 15,
+      min: 1,
+      max: 999,
+    },
+    notificationsEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    emailNotifications: {
+      type: Boolean,
+      default: true,
+    },
+    autoAcceptTickets: {
+      type: Boolean,
+      default: false,
+    },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      default: "",
     },
   },
   {

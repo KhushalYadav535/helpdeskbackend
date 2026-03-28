@@ -6,6 +6,116 @@ import { hasPermission, getAgentLevel } from "../utils/agentPermissions";
 
 const router = express.Router();
 
+const MAX_TICKETS_ERR = "Max tickets must be at least 1.";
+
+function parseMaxTickets(value: unknown): { ok: true; n: number } | { ok: false; error: string } {
+  const n = typeof value === "string" ? parseInt(value, 10) : Number(value);
+  if (isNaN(n) || n < 1 || n > 999) {
+    return { ok: false, error: MAX_TICKETS_ERR };
+  }
+  return { ok: true, n };
+}
+
+// @route   GET /api/agents/me
+// @desc    Current user's agent record + settings (agents only)
+// @access  Private
+router.get("/me", protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    if (user.role !== "agent") {
+      return res.status(403).json({
+        success: false,
+        error: "This endpoint is only for agent accounts",
+      });
+    }
+
+    const agent = await Agent.findOne({ userId: user._id })
+      .populate("tenantId", "name")
+      .populate("userId", "name email");
+
+    if (!agent) {
+      return res.status(404).json({ success: false, error: "Agent profile not found" });
+    }
+
+    const u = agent.userId as any;
+    res.json({
+      success: true,
+      data: {
+        id: agent._id,
+        name: u?.name,
+        email: u?.email,
+        agentLevel: agent.agentLevel || "agent",
+        tenantName: (agent.tenantId as any)?.name,
+        maxTicketsPerDay: agent.maxTicketsPerDay ?? 15,
+        notificationsEnabled: agent.notificationsEnabled ?? true,
+        emailNotifications: agent.emailNotifications ?? true,
+        autoAcceptTickets: agent.autoAcceptTickets ?? false,
+        phoneNumber: agent.phoneNumber || "",
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Server error" });
+  }
+});
+
+// @route   PATCH /api/agents/me/settings
+// @desc    Update own preferences (not maxTicketsPerDay — Tenant Admin only via PUT /agents/:id)
+// @access  Private (agent)
+router.patch("/me/settings", protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    if (user.role !== "agent") {
+      return res.status(403).json({ success: false, error: "Only agents can update these settings" });
+    }
+
+    if (req.body.maxTicketsPerDay !== undefined) {
+      return res.status(403).json({
+        success: false,
+        error: "Only Tenant Admin can modify Max Tickets Per Day",
+      });
+    }
+
+    const agent = await Agent.findOne({ userId: user._id });
+    if (!agent) {
+      return res.status(404).json({ success: false, error: "Agent profile not found" });
+    }
+
+    const { notificationsEnabled, emailNotifications, autoAcceptTickets, phoneNumber, fullName } = req.body;
+
+    if (typeof notificationsEnabled === "boolean") agent.notificationsEnabled = notificationsEnabled;
+    if (typeof emailNotifications === "boolean") agent.emailNotifications = emailNotifications;
+    if (typeof autoAcceptTickets === "boolean") agent.autoAcceptTickets = autoAcceptTickets;
+    if (typeof phoneNumber === "string") agent.phoneNumber = phoneNumber.trim();
+
+    if (typeof fullName === "string" && fullName.trim()) {
+      await User.findByIdAndUpdate(user._id, { name: fullName.trim() });
+    }
+
+    await agent.save();
+
+    const fresh = await Agent.findById(agent._id).populate("userId", "name email").populate("tenantId", "name");
+    const u = fresh!.userId as any;
+
+    res.json({
+      success: true,
+      data: {
+        id: fresh!._id,
+        name: u?.name,
+        email: u?.email,
+        agentLevel: fresh!.agentLevel || "agent",
+        tenantName: (fresh!.tenantId as any)?.name,
+        maxTicketsPerDay: fresh!.maxTicketsPerDay ?? 15,
+        notificationsEnabled: fresh!.notificationsEnabled ?? true,
+        emailNotifications: fresh!.emailNotifications ?? true,
+        autoAcceptTickets: fresh!.autoAcceptTickets ?? false,
+        phoneNumber: fresh!.phoneNumber || "",
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Server error" });
+  }
+});
+
 // @route   GET /api/agents
 // @desc    Get all agents
 // @access  Private
@@ -42,6 +152,10 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
         satisfaction: agent.satisfaction,
         tenantId: agent.tenantId,
         joinDate: agent.joinDate,
+        maxTicketsPerDay: agent.maxTicketsPerDay ?? 15,
+        notificationsEnabled: agent.notificationsEnabled ?? true,
+        emailNotifications: agent.emailNotifications ?? true,
+        autoAcceptTickets: agent.autoAcceptTickets ?? false,
       })),
     });
   } catch (error: any) {
@@ -82,6 +196,10 @@ router.get("/:id", protect, async (req: AuthRequest, res: Response) => {
         satisfaction: agent.satisfaction,
         tenantId: agent.tenantId,
         joinDate: agent.joinDate,
+        maxTicketsPerDay: agent.maxTicketsPerDay ?? 15,
+        notificationsEnabled: agent.notificationsEnabled ?? true,
+        emailNotifications: agent.emailNotifications ?? true,
+        autoAcceptTickets: agent.autoAcceptTickets ?? false,
       },
     });
   } catch (error: any) {
@@ -198,6 +316,26 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
       });
     }
 
+    const wantsMaxTickets =
+      req.body.maxTicketsPerDay !== undefined && req.body.maxTicketsPerDay !== null;
+
+    if (wantsMaxTickets) {
+      if (user.role !== "tenant-admin" && user.role !== "super-admin") {
+        return res.status(403).json({
+          success: false,
+          error: "Only Tenant Admin can modify Max Tickets Per Day",
+        });
+      }
+      const parsed = parseMaxTickets(req.body.maxTicketsPerDay);
+      if (!parsed.ok) {
+        return res.status(400).json({
+          success: false,
+          error: parsed.error,
+        });
+      }
+      req.body.maxTicketsPerDay = parsed.n;
+    }
+
     // Check permissions
     // Super-admin and tenant-admin can always update
     if (user.role === "super-admin" || user.role === "tenant-admin") {
@@ -234,10 +372,26 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
       });
     }
 
+    const allowedKeys = [
+      "status",
+      "agentLevel",
+      "maxTicketsPerDay",
+      "notificationsEnabled",
+      "emailNotifications",
+      "autoAcceptTickets",
+      "phoneNumber",
+    ];
+    const updatePayload: Record<string, unknown> = {};
+    for (const key of allowedKeys) {
+      if (key in req.body) {
+        updatePayload[key] = req.body[key];
+      }
+    }
+
     // Update agent
     const updatedAgent = await Agent.findByIdAndUpdate(
       agentId,
-      req.body,
+      { $set: updatePayload },
       { new: true, runValidators: true }
     )
       .populate("userId", "name email avatar")
@@ -257,6 +411,10 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
         satisfaction: updatedAgent!.satisfaction,
         tenantId: updatedAgent!.tenantId,
         joinDate: updatedAgent!.joinDate,
+        maxTicketsPerDay: updatedAgent!.maxTicketsPerDay ?? 15,
+        notificationsEnabled: updatedAgent!.notificationsEnabled ?? true,
+        emailNotifications: updatedAgent!.emailNotifications ?? true,
+        autoAcceptTickets: updatedAgent!.autoAcceptTickets ?? false,
       },
     });
   } catch (error: any) {
