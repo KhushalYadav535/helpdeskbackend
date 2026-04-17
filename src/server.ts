@@ -23,6 +23,7 @@ import commentRoutes from "./routes/comments";
 import leadRoutes from "./routes/leads";
 import notificationRoutes from "./routes/notifications";
 import searchRoutes from "./routes/search";
+import vapiIntakeRoutes from "./routes/vapiIntake";
 
 // Create Express app
 const app: Application = express();
@@ -84,6 +85,8 @@ app.use("/api/comments", commentRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api", vapiIntakeRoutes);
+app.use("/", vapiIntakeRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
