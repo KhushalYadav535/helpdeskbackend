@@ -154,6 +154,41 @@ router.post("/service-requests", async (req: Request, res: Response) => {
   }
 });
 
+router.post("/leads", async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ success: false, error: "Unable to resolve tenant" });
+    }
+
+    const payload = req.body || {};
+    const lead = await createLeadWithRetry({
+      source: "phone",
+      type: "sales-lead",
+      status: "new",
+      callerName: payload.customer || "Anonymous",
+      callerPhone: payload.customerPhone,
+      callTranscript: payload.description || "",
+      callTimestamp: payload.metadata?.callTimestamp ? new Date(payload.metadata.callTimestamp) : new Date(),
+      tenantId: new mongoose.Types.ObjectId(tenantId),
+      metadata: {
+        productInterest: payload.product_interest || "other",
+        language: payload.language,
+        ...payload.metadata,
+      },
+      notes: payload.title || "Lead created by VAPI workflow",
+    });
+
+    return res.status(201).json({
+      success: true,
+      id: lead.leadId,
+      data: lead,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message || "Server error" });
+  }
+});
+
 router.post("/call-logs", async (req: Request, res: Response) => {
   try {
     const tenantId = await resolveTenantId(req);

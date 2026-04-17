@@ -152,7 +152,7 @@ router.post("/migrate-from-tickets", protect, authorize("super-admin", "tenant-a
 router.get("/", protect, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { type, status, source, tenantId, limit, page } = req.query;
+    const { type, status, source, tenantId, limit, page, includeAllTypes } = req.query;
 
     // Build query
     const query: any = {};
@@ -169,9 +169,10 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
 
     // Leads = only calls where caller asked for products/services (sales-lead, service-request)
     // Exclude support and other (general inquiries, complaints)
+    const includeAllLeadTypes = String(includeAllTypes || "").toLowerCase() === "true";
     if (type) {
       query.type = type;
-    } else {
+    } else if (!includeAllLeadTypes) {
       query.type = { $in: ["sales-lead", "service-request"] };
     }
     if (status) {
