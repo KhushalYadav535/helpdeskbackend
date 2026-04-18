@@ -119,6 +119,7 @@ router.post("/complaints", async (req: Request, res: Response) => {
   }
 });
 
+/** Service requests = tickets + call log — not Lead rows (Leads = sales / FD / MF only). */
 router.post("/service-requests", async (req: Request, res: Response) => {
   try {
     const tenantId = await resolveTenantId(req);
@@ -127,28 +128,33 @@ router.post("/service-requests", async (req: Request, res: Response) => {
     }
 
     const payload = req.body || {};
-    const lead = await createLeadWithRetry({
-      source: "phone",
-      type: "service-request",
-      status: "new",
-      callerName: payload.customer || "Anonymous",
-      callerPhone: payload.customerPhone,
-      callTranscript: payload.description || "",
-      callTimestamp: payload.metadata?.callTimestamp ? new Date(payload.metadata.callTimestamp) : new Date(),
+    const assignedAgentId = await autoAssignAgent(tenantId, payload.priority || "Medium");
+
+    const ticket = await Ticket.create({
+      title: payload.title || "Service request",
+      description: payload.description || "No description provided",
+      priority: normalizePriority(payload.priority),
+      status: payload.status || "Open",
+      category: "account",
       tenantId: new mongoose.Types.ObjectId(tenantId),
+      agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
+      assignedAt: assignedAgentId ? new Date() : undefined,
+      customer: payload.customer || "Anonymous",
+      customerPhone: payload.customerPhone,
+      source: "phone",
+      channel: payload.channel || "phone",
       metadata: {
+        kind: "service-request",
         serviceRequestType: payload.sr_type,
         language: payload.language,
-        priority: normalizePriority(payload.priority),
         ...payload.metadata,
       },
-      notes: payload.title || "Service request created by VAPI workflow",
     });
 
     return res.status(201).json({
       success: true,
-      id: lead.leadId,
-      data: lead,
+      id: ticket.ticketId,
+      data: ticket,
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message || "Server error" });

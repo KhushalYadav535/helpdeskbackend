@@ -167,13 +167,12 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
       query.tenantId = user.tenantId;
     }
 
-    // Leads = only calls where caller asked for products/services (sales-lead, service-request)
-    // Exclude support and other (general inquiries, complaints)
+    // Leads UI = product/sales pipeline only (sales-lead). Service requests & complaints use Tickets + call logs.
     const includeAllLeadTypes = String(includeAllTypes || "").toLowerCase() === "true";
     if (type) {
       query.type = type;
     } else if (!includeAllLeadTypes) {
-      query.type = { $in: ["sales-lead", "service-request"] };
+      query.type = "sales-lead";
     }
     if (status) {
       query.status = status;
