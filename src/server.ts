@@ -24,6 +24,7 @@ import leadRoutes from "./routes/leads";
 import notificationRoutes from "./routes/notifications";
 import searchRoutes from "./routes/search";
 import vapiIntakeRoutes from "./routes/vapiIntake";
+import callHistoryRoutes from "./routes/callHistory";
 
 // Create Express app
 const app: Application = express();
@@ -83,6 +84,9 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api/email", emailRoutes);
 app.use("/api/comments", commentRoutes);
 app.use("/api/leads", leadRoutes);
+/** GET list: same router at /call-logs (alias) and /call-history (compat). POST /api/call-logs is VAPI intake. */
+app.use("/api/call-logs", callHistoryRoutes);
+app.use("/api/call-history", callHistoryRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api", vapiIntakeRoutes);

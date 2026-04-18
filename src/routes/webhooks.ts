@@ -416,7 +416,7 @@ router.post("/phone", async (req: express.Request, res: Response) => {
       },
     });
 
-    // Create Lead as well so Call History shows the call (Call History reads from Leads)
+    // Also create Lead for legacy CRM / leads list (voice call audit lives in CallHistory via POST /call-logs)
     const analysisResult = transcript
       ? analyzeTranscript(transcript)
       : {

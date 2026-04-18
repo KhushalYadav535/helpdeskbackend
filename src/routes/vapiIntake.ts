@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import mongoose from "mongoose";
 import { Ticket } from "../models/Ticket";
 import { Lead } from "../models/Lead";
+import { CallHistory } from "../models/CallHistory";
 import { Tenant } from "../models/Tenant";
 import { autoAssignAgent } from "../utils/autoAssignAgent";
 
@@ -189,6 +190,10 @@ router.post("/leads", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Voice / automation call audit trail — not a sales Lead.
+ * Complaints: pair with POST /complaints (ticket). Product interest: also POST /leads for a real Lead.
+ */
 router.post("/call-logs", async (req: Request, res: Response) => {
   try {
     const tenantId = await resolveTenantId(req);
@@ -197,31 +202,34 @@ router.post("/call-logs", async (req: Request, res: Response) => {
     }
 
     const payload = req.body || {};
-    const callType = payload.call_type === "info" ? "other" : "support";
-    const status = payload.resolution === "resolved" ? "closed" : "new";
+    const callTs = payload.metadata?.callTimestamp
+      ? new Date(payload.metadata.callTimestamp)
+      : new Date();
 
-    const lead = await createLeadWithRetry({
-      source: "phone",
-      type: callType,
-      status,
-      callerName: payload.customer || "Anonymous",
-      callerPhone: payload.customerPhone,
-      callTranscript: payload.description || "",
-      callTimestamp: payload.metadata?.callTimestamp ? new Date(payload.metadata.callTimestamp) : new Date(),
+    const row = await CallHistory.create({
       tenantId: new mongoose.Types.ObjectId(tenantId),
+      title: payload.title || "Call log",
+      description: payload.description || "",
+      customer: payload.customer || "Anonymous",
+      customerPhone: payload.customerPhone,
+      accountNumber: payload.accountNumber,
+      callType: String(payload.call_type || "unknown"),
+      resolution: payload.resolution || "pending",
+      needsReview: !!payload.needs_review,
+      source: payload.source || "phone",
+      channel: payload.channel || "phone",
+      language: payload.language,
       metadata: {
-        needsReview: !!payload.needs_review,
-        callLogType: payload.call_type,
-        language: payload.language,
         ...payload.metadata,
+        needsReview: !!payload.needs_review,
       },
-      notes: payload.title || "Call log created by VAPI workflow",
+      callTimestamp: callTs,
     });
 
     return res.status(201).json({
       success: true,
-      id: lead.leadId,
-      data: lead,
+      id: row.historyId,
+      data: row,
     });
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message || "Server error" });

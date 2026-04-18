@@ -25,6 +25,7 @@ function staticPagesForRole(role: string) {
     { id: "s-3", title: "Work Preferences", subtitle: "Settings", category: "settings" as const, url: `${b}/settings` },
     { id: "s-4", title: "Tickets", subtitle: "Dashboard", category: "settings" as const, url: `${b}/tickets` },
     { id: "s-5", title: "Leads", subtitle: "Dashboard", category: "settings" as const, url: `${b}/leads` },
+    { id: "s-6", title: "Call Logs", subtitle: "Dashboard", category: "settings" as const, url: `${b}/call-logs` },
     { id: "kb-1", title: "Knowledge Base", subtitle: "Help", category: "knowledge-base" as const, url: "/dashboard/customer/kb" },
   ];
 }
