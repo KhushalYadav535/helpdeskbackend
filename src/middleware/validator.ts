@@ -35,6 +35,14 @@ export const validateTicket: ValidationChain[] = [
     .optional()
     .isIn(["general", "technical", "billing", "feature", "bug", "account"])
     .withMessage("Invalid category"),
+  body("requestType")
+    .optional()
+    .isIn(["service-request", "troubleshooting"])
+    .withMessage("Invalid request type"),
+  body("metadata.kind")
+    .optional()
+    .isIn(["service-request", "troubleshooting"])
+    .withMessage("Invalid metadata kind"),
 ];
 
 export const validateTenant: ValidationChain[] = [

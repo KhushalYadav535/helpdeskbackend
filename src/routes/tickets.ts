@@ -14,12 +14,43 @@ import { runEscalation } from "../utils/escalationService";
 
 const router = express.Router();
 
+const buildKindFilter = (kind?: string) => {
+  const value = (kind || "").trim().toLowerCase();
+  if (!value) return null;
+
+  if (value === "service-request") {
+    return {
+      $or: [
+        { "metadata.kind": "service-request" },
+        { "metadata.kind": "service_request" },
+        { "metadata.callType": "service_request" },
+        { "metadata.intent": "service-request" },
+        { "metadata.intent": "service_request" },
+      ],
+    };
+  }
+
+  if (value === "troubleshooting") {
+    return {
+      $or: [
+        { "metadata.kind": "troubleshooting" },
+        { "metadata.callType": "troubleshoot" },
+        { "metadata.callType": "troubleshooting" },
+        { "metadata.intent": "troubleshoot" },
+        { "metadata.intent": "troubleshooting" },
+      ],
+    };
+  }
+
+  return null;
+};
+
 // @route   GET /api/tickets
 // @desc    Get all tickets (filtered by tenant)
 // @access  Private
 router.get("/", protect, async (req: AuthRequest, res: Response) => {
   try {
-    const { status, priority, tenantId, myTickets } = req.query;
+    const { status, priority, tenantId, myTickets, kind } = req.query;
     const user = req.user!;
 
     // Build query
@@ -45,6 +76,11 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
     // Agent: always see only their assigned tickets (no option to see all)
     if (user.role === "agent") {
       query.agentId = user._id;
+    }
+
+    const kindFilter = buildKindFilter(typeof kind === "string" ? kind : undefined);
+    if (kindFilter) {
+      query.$and = [...(query.$and || []), kindFilter];
     }
 
     const tickets = await Ticket.find(query)
@@ -119,9 +155,15 @@ router.post("/", protect, validateTicket, async (req: AuthRequest, res: Response
     }
 
     const user = req.user!;
+    const requestType = (req.body?.requestType || req.body?.kind || req.body?.metadata?.kind || "").toString().trim().toLowerCase();
+    const normalizedKind = requestType === "troubleshooting" ? "troubleshooting" : requestType === "service-request" ? "service-request" : undefined;
     const ticketData = {
       ...req.body,
       tenantId: req.body.tenantId || user.tenantId,
+      metadata: {
+        ...(req.body?.metadata || {}),
+        ...(normalizedKind ? { kind: normalizedKind } : {}),
+      },
     };
 
     const ticket = await Ticket.create(ticketData);

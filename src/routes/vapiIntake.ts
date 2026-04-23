@@ -161,6 +161,48 @@ router.post("/service-requests", async (req: Request, res: Response) => {
   }
 });
 
+/** Troubleshooting requests = tickets + call log. */
+router.post("/troubleshooting", async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ success: false, error: "Unable to resolve tenant" });
+    }
+
+    const payload = req.body || {};
+    const assignedAgentId = await autoAssignAgent(tenantId, payload.priority || "Medium");
+
+    const ticket = await Ticket.create({
+      title: payload.title || "Troubleshooting request",
+      description: payload.description || "No description provided",
+      priority: normalizePriority(payload.priority),
+      status: payload.status || "Open",
+      category: "technical",
+      tenantId: new mongoose.Types.ObjectId(tenantId),
+      agentId: assignedAgentId ? new mongoose.Types.ObjectId(assignedAgentId) : undefined,
+      assignedAt: assignedAgentId ? new Date() : undefined,
+      customer: payload.customer || "Anonymous",
+      customerPhone: payload.customerPhone,
+      source: "phone",
+      channel: payload.channel || "phone",
+      metadata: {
+        kind: "troubleshooting",
+        troubleshootingType: payload.troubleshooting_type,
+        language: payload.language,
+        ...payload.metadata,
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      id: ticket.ticketId,
+      data: ticket,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message || "Server error" });
+  }
+});
+
 router.post("/leads", async (req: Request, res: Response) => {
   try {
     const tenantId = await resolveTenantId(req);
