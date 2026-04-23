@@ -5,7 +5,8 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
-  role: "super-admin" | "tenant-admin" | "agent" | "customer";
+  role: "super-admin" | "tenant-admin" | "agent" | "customer" | "sales-team";
+  accessRoles?: ("agent" | "sales-team")[];
   tenantId?: mongoose.Types.ObjectId;
   avatar?: string;
   companyName?: string;
@@ -40,8 +41,17 @@ const userSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ["super-admin", "tenant-admin", "agent", "customer"],
+      enum: ["super-admin", "tenant-admin", "agent", "customer", "sales-team"],
       required: [true, "Role is required"],
+    },
+    accessRoles: {
+      type: [String],
+      enum: ["agent", "sales-team"],
+      default: function (this: IUser) {
+        if (this.role === "agent") return ["agent"];
+        if (this.role === "sales-team") return ["sales-team"];
+        return [];
+      },
     },
     tenantId: {
       type: Schema.Types.ObjectId,

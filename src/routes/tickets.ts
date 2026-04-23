@@ -42,6 +42,16 @@ const buildKindFilter = (kind?: string) => {
     };
   }
 
+  if (value === "complaint") {
+    return {
+      $or: [
+        { "metadata.kind": "complaint" },
+        { "metadata.callType": "complaint" },
+        { "metadata.intent": "complaint" },
+      ],
+    };
+  }
+
   return null;
 };
 
@@ -52,6 +62,8 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
   try {
     const { status, priority, tenantId, myTickets, kind } = req.query;
     const user = req.user!;
+    const accessRoles = (user as any).accessRoles || [];
+    const hasAgentAccess = user.role === "agent" || accessRoles.includes("agent");
 
     // Build query
     const query: any = {};
@@ -74,7 +86,7 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
     }
 
     // Agent: always see only their assigned tickets (no option to see all)
-    if (user.role === "agent") {
+    if (hasAgentAccess && user.role !== "super-admin" && user.role !== "tenant-admin") {
       query.agentId = user._id;
     }
 
@@ -156,7 +168,12 @@ router.post("/", protect, validateTicket, async (req: AuthRequest, res: Response
 
     const user = req.user!;
     const requestType = (req.body?.requestType || req.body?.kind || req.body?.metadata?.kind || "").toString().trim().toLowerCase();
-    const normalizedKind = requestType === "troubleshooting" ? "troubleshooting" : requestType === "service-request" ? "service-request" : undefined;
+    const normalizedKind =
+      requestType === "complaint"
+        ? "complaint"
+        : requestType === "service-request"
+          ? "service-request"
+          : undefined;
     const ticketData = {
       ...req.body,
       tenantId: req.body.tenantId || user.tenantId,
@@ -165,6 +182,17 @@ router.post("/", protect, validateTicket, async (req: AuthRequest, res: Response
         ...(normalizedKind ? { kind: normalizedKind } : {}),
       },
     };
+
+    // Manual assignment is role-gated (tenant/super admin or supervisor).
+    if (ticketData.agentId) {
+      const canAssign = await hasPermission(user, "canAssignTickets");
+      if (!canAssign) {
+        return res.status(403).json({
+          success: false,
+          error: "You don't have permission to assign tickets. Only Supervisors can manually assign or transfer tickets.",
+        });
+      }
+    }
 
     const ticket = await Ticket.create(ticketData);
 

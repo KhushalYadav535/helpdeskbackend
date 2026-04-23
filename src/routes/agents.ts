@@ -1,6 +1,7 @@
 import express, { Response } from "express";
 import { Agent } from "../models/Agent";
 import { User } from "../models/User";
+import { Ticket } from "../models/Ticket";
 import { protect, AuthRequest, authorize } from "../middleware/auth";
 import { hasPermission, getAgentLevel } from "../utils/agentPermissions";
 
@@ -134,16 +135,19 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
     }
 
     const agents = await Agent.find(query)
-      .populate("userId", "name email avatar")
+      .populate("userId", "name email avatar role accessRoles")
       .populate("tenantId", "name");
 
     res.json({
       success: true,
       data: agents.map((agent) => ({
         id: agent._id,
+        userId: (agent.userId as any)?._id || agent.userId,
         name: (agent.userId as any).name,
         email: (agent.userId as any).email,
         avatar: (agent.userId as any).avatar,
+        role: (agent.userId as any).role,
+        accessRoles: (agent.userId as any).accessRoles || ["agent"],
         // Force display as online in responses
         status: "online",
         agentLevel: agent.agentLevel || "agent",
@@ -172,7 +176,7 @@ router.get("/", protect, async (req: AuthRequest, res: Response) => {
 router.get("/:id", protect, async (req: AuthRequest, res: Response) => {
   try {
     const agent = await Agent.findById(req.params.id)
-      .populate("userId", "name email avatar")
+      .populate("userId", "name email avatar role accessRoles")
       .populate("tenantId", "name");
 
     if (!agent) {
@@ -189,6 +193,8 @@ router.get("/:id", protect, async (req: AuthRequest, res: Response) => {
         name: (agent.userId as any).name,
         email: (agent.userId as any).email,
         avatar: (agent.userId as any).avatar,
+        role: (agent.userId as any).role,
+        accessRoles: (agent.userId as any).accessRoles || ["agent"],
         status: agent.status,
         agentLevel: agent.agentLevel || "agent",
         ticketsAssigned: agent.ticketsAssigned,
@@ -428,6 +434,70 @@ router.put("/:id", protect, async (req: AuthRequest, res: Response) => {
 // @route   DELETE /api/agents/:id
 // @desc    Delete agent
 // @access  Private (Tenant Admin, Super Admin)
+router.post("/:id/convert-to-sales-team", protect, authorize("super-admin", "tenant-admin"), async (
+  req: AuthRequest,
+  res: Response
+) => {
+  try {
+    const user = req.user!;
+    const agentId = req.params.id;
+
+    const agent = await Agent.findById(agentId).populate("userId");
+    if (!agent) {
+      return res.status(404).json({
+        success: false,
+        error: "Agent not found",
+      });
+    }
+
+    if (user.role === "tenant-admin" && agent.tenantId.toString() !== user.tenantId?.toString()) {
+      return res.status(403).json({
+        success: false,
+        error: "Not authorized to modify agents from other tenants",
+      });
+    }
+
+    const userId = (agent.userId as any)?._id || agent.userId;
+    const agentUser = await User.findById(userId);
+    if (!agentUser) {
+      return res.status(404).json({
+        success: false,
+        error: "Associated user not found",
+      });
+    }
+
+    agentUser.role = "sales-team";
+    (agentUser as any).accessRoles = ["sales-team"];
+    await agentUser.save();
+
+    // Unassign tickets from this user because they are no longer an agent.
+    const ticketUpdateResult = await Ticket.updateMany(
+      { agentId: userId, status: { $nin: ["Closed", "Resolved"] } },
+      { $set: { updated: new Date() }, $unset: { agentId: 1, assignedAt: 1 } }
+    );
+
+    await Agent.findByIdAndDelete(agentId);
+
+    res.json({
+      success: true,
+      message: "Agent converted to sales-team user successfully",
+      data: {
+        id: String(agentUser._id),
+        name: agentUser.name,
+        email: agentUser.email,
+        role: agentUser.role,
+        tenantId: agentUser.tenantId?.toString(),
+      },
+      unassignedTickets: ticketUpdateResult.modifiedCount || 0,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Server error",
+    });
+  }
+});
+
 router.delete("/:id", protect, authorize("super-admin", "tenant-admin"), async (
   req: AuthRequest,
   res: Response

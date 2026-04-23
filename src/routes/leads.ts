@@ -149,7 +149,7 @@ router.post("/migrate-from-tickets", protect, authorize("super-admin", "tenant-a
 // @route   GET /api/leads
 // @desc    Get all leads
 // @access  Private
-router.get("/", protect, async (req: AuthRequest, res: Response) => {
+router.get("/", protect, authorize("super-admin", "tenant-admin", "sales-team"), async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
     const { type, status, source, tenantId, limit, page, includeAllTypes } = req.query;

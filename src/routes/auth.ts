@@ -3,12 +3,228 @@ import { validationResult } from "express-validator";
 import crypto from "crypto";
 import { User } from "../models/User";
 import { Tenant } from "../models/Tenant";
+import { Agent } from "../models/Agent";
+import { Ticket } from "../models/Ticket";
 import { generateToken } from "../utils/generateToken";
 import { validateRegister, validateLogin } from "../middleware/validator";
-import { protect, AuthRequest } from "../middleware/auth";
+import { protect, AuthRequest, authorize } from "../middleware/auth";
 import { emailService } from "../utils/emailService";
 
 const router = express.Router();
+
+// @route   GET /api/auth/users
+// @desc    List users by role (tenant-scoped for tenant-admin)
+// @access  Private (Super Admin, Tenant Admin)
+router.get("/users", protect, authorize("super-admin", "tenant-admin"), async (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const role = (req.query.role as string) || "sales-team";
+    const requestedTenantId = req.query.tenantId as string | undefined;
+
+    const query: any = role === "sales-team"
+      ? { $or: [{ role: "sales-team" }, { accessRoles: "sales-team" }] }
+      : { role };
+    if (user.role === "super-admin") {
+      if (requestedTenantId) {
+        query.tenantId = requestedTenantId;
+      }
+    } else {
+      query.tenantId = user.tenantId;
+    }
+
+    const users = await User.find(query).select("-password").sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: users.map((u: any) => ({
+        id: String(u._id),
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        accessRoles: u.accessRoles || [],
+        tenantId: u.tenantId?.toString?.(),
+        avatar: u.avatar,
+        companyName: u.companyName,
+        isActive: u.isActive,
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Server error",
+    });
+  }
+});
+
+// @route   POST /api/auth/users
+// @desc    Create tenant-scoped user (sales-team supported)
+// @access  Private (Super Admin, Tenant Admin)
+router.post("/users", protect, authorize("super-admin", "tenant-admin"), async (req: AuthRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { name, email, password, role, companyName, tenantId } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({
+        success: false,
+        error: "Name, email, password, and role are required",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: "Password must be at least 6 characters",
+      });
+    }
+
+    const allowedRoles = ["sales-team"];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        error: "Only sales-team users can be created from this endpoint",
+      });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: "User already exists with this email",
+      });
+    }
+
+    const finalTenantId = actor.role === "super-admin" ? tenantId : actor.tenantId;
+    if (!finalTenantId) {
+      return res.status(400).json({
+        success: false,
+        error: "Tenant is required",
+      });
+    }
+
+    const createdUser = await User.create({
+      name,
+      email,
+      password,
+      role,
+      accessRoles: role === "agent" ? ["agent"] : role === "sales-team" ? ["sales-team"] : [],
+      tenantId: finalTenantId,
+      companyName,
+      avatar: name.substring(0, 2).toUpperCase(),
+      isActive: true,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: String(createdUser._id),
+        name: createdUser.name,
+        email: createdUser.email,
+        role: createdUser.role,
+        accessRoles: (createdUser as any).accessRoles || [],
+        tenantId: createdUser.tenantId?.toString(),
+        avatar: createdUser.avatar,
+        companyName: createdUser.companyName,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Server error",
+    });
+  }
+});
+
+// @route   PATCH /api/auth/users/:id/access
+// @desc    Update additional access roles (agent/sales-team)
+// @access  Private (Super Admin, Tenant Admin)
+router.patch("/users/:id/access", protect, authorize("super-admin", "tenant-admin"), async (req: AuthRequest, res: Response) => {
+  try {
+    const actor = req.user!;
+    const { accessRoles, primaryRole } = req.body;
+    const userId = req.params.id;
+
+    if (!Array.isArray(accessRoles)) {
+      return res.status(400).json({
+        success: false,
+        error: "accessRoles must be an array",
+      });
+    }
+
+    const allowed = ["agent", "sales-team"];
+    const normalized = Array.from(new Set(accessRoles.filter((r: string) => allowed.includes(r))));
+    const requestedPrimaryRole =
+      primaryRole === "agent" || primaryRole === "sales-team" ? primaryRole : undefined;
+
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+      });
+    }
+
+    if (actor.role === "tenant-admin" && targetUser.tenantId?.toString() !== actor.tenantId?.toString()) {
+      return res.status(403).json({
+        success: false,
+        error: "Not authorized to update this user",
+      });
+    }
+
+    if (targetUser.role !== "agent" && targetUser.role !== "sales-team") {
+      return res.status(400).json({
+        success: false,
+        error: "Access update is only supported for agent/sales-team users",
+      });
+    }
+
+    const finalPrimaryRole = requestedPrimaryRole || targetUser.role;
+    if (finalPrimaryRole === "agent" && !normalized.includes("agent")) normalized.push("agent");
+    if (finalPrimaryRole === "sales-team" && !normalized.includes("sales-team")) normalized.push("sales-team");
+
+    targetUser.role = finalPrimaryRole;
+    targetUser.accessRoles = normalized as any;
+    await targetUser.save();
+
+    // Keep Agent document in sync with role/access.
+    const existingAgentDoc = await Agent.findOne({ userId: targetUser._id });
+    const shouldHaveAgentDoc = normalized.includes("agent");
+
+    if (shouldHaveAgentDoc && !existingAgentDoc) {
+      await Agent.create({
+        userId: targetUser._id,
+        tenantId: targetUser.tenantId,
+        status: "offline",
+        agentLevel: "agent",
+      });
+    }
+
+    if (!shouldHaveAgentDoc && existingAgentDoc) {
+      await Ticket.updateMany(
+        { agentId: targetUser._id, status: { $nin: ["Closed", "Resolved"] } },
+        { $set: { updated: new Date() }, $unset: { agentId: 1, assignedAt: 1 } }
+      );
+      await Agent.findByIdAndDelete(existingAgentDoc._id);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: String(targetUser._id),
+        name: targetUser.name,
+        email: targetUser.email,
+        role: targetUser.role,
+        accessRoles: targetUser.accessRoles || [],
+        tenantId: targetUser.tenantId?.toString(),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || "Server error",
+    });
+  }
+});
 
 // @route   POST /api/auth/register
 // @desc    Register a new user
@@ -81,6 +297,7 @@ router.post("/register", validateRegister, async (req: Request, res: Response) =
         name: user.name,
         email: user.email,
         role: user.role,
+        accessRoles: (user as any).accessRoles || [],
         tenantId: user.tenantId?.toString(),
         avatar: user.avatar,
         companyName: user.companyName,
@@ -147,6 +364,7 @@ router.post("/login", validateLogin, async (req: Request, res: Response) => {
           name: user.name,
           email: user.email,
           role: "super-admin", // Always return super-admin
+          accessRoles: (user as any).accessRoles || [],
           tenantId: user.tenantId?.toString(),
           avatar: user.avatar,
           companyName: user.companyName,
@@ -191,6 +409,7 @@ router.post("/login", validateLogin, async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        accessRoles: (user as any).accessRoles || [],
         tenantId: user.tenantId?.toString(),
         avatar: user.avatar,
         companyName: user.companyName,
@@ -337,6 +556,7 @@ router.get("/me", protect, async (req: AuthRequest, res: Response) => {
         name: user!.name,
         email: user!.email,
         role: user!.role,
+        accessRoles: (user as any).accessRoles || [],
         tenantId: user!.tenantId?.toString(),
         avatar: user!.avatar,
         companyName: user!.companyName,

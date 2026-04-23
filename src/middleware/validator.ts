@@ -11,7 +11,7 @@ export const validateRegister: ValidationChain[] = [
     .isLength({ min: 6 })
     .withMessage("Password must be at least 6 characters"),
   body("role")
-    .isIn(["super-admin", "tenant-admin", "agent", "customer"])
+    .isIn(["super-admin", "tenant-admin", "agent", "customer", "sales-team"])
     .withMessage("Invalid role"),
 ];
 
@@ -37,11 +37,11 @@ export const validateTicket: ValidationChain[] = [
     .withMessage("Invalid category"),
   body("requestType")
     .optional()
-    .isIn(["service-request", "troubleshooting"])
+    .isIn(["service-request", "complaint"])
     .withMessage("Invalid request type"),
   body("metadata.kind")
     .optional()
-    .isIn(["service-request", "troubleshooting"])
+    .isIn(["service-request", "complaint"])
     .withMessage("Invalid metadata kind"),
 ];
 
